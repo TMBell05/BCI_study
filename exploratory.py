@@ -13,7 +13,7 @@ sweep = 0
 lat_bat = 29.434507
 lon_bat = -99.684534
 
-files = glob('/Users/tylerbell/data/nexrad/KDFX/raw/20160617/KDFX20160617_02*')
+files = glob('/Users/tbupper90/Data/nexrad/KDFX/raw/20160617/KDFX20160617_*')
 
 first = True
 for f in files:
@@ -38,7 +38,7 @@ for f in files:
         del x_bat, y_bat, x_radar, y_radar, _
 
         # Init arrays for averaging
-        kdp_hv = np.zeros_like(radar.fields['differential_phase']['data'][slice].data)
+        phi_dp_running = np.zeros_like(radar.fields['differential_phase']['data'][slice].data)
         ref = np.zeros_like(radar.fields['reflectivity']['data'][slice])
 
         first = False
@@ -51,23 +51,47 @@ for f in files:
     x_m = range_m * np.cos(elev) * np.sin(az_rad)
     y_m = range_m * np.cos(elev) * np.cos(az_rad)
 
-    tmp = radar.fields['differential_phase']['data'][slice]
-    ind = tmp.data > 70
+    # Get the correct order of the azimuths
+    az_p = np.argsort(az_rad, axis=0)[:,0]
 
+    # Sort the x and y grids based on the order of the azimuths
+    x_m = x_m[az_p, :]
+    y_m = y_m[az_p, :]
+
+    # # Apply filters and corrections to data
+    gate_filter = pyart.filters.GateFilter(radar)
+    gate_filter.exclude_below('differential_phase', 70.)
+    gate_filter = pyart.correct.despeckle_field(radar, 'differential_phase', gatefilter=gate_filter)
+
+    # Extract the desired data and get it in the correct order
+    phi_dp = radar.fields['differential_phase']['data'][slice][az_p, :]
+    ref = radar.fields['reflectivity']['data'][slice][az_p, :]
+
+    # Convert the filter to mask
+    phi_dp.mask = gate_filter.gate_excluded[az_p, :]
 
     # Get differential phase data
-    kdp_hv[ind] += tmp[ind]
-    ref += radar.fields['reflectivity']['data'][slice]
+    phi_dp_running[~phi_dp.mask] += phi_dp[~phi_dp.mask] * ref[~phi_dp.mask]
 
-    plt.figure()
+    plt.figure(figsize=(16, 8))
+    plt.subplot(1, 2, 1)
     plt.xlim(-80, 80)
     plt.ylim(-80, 80)
-    plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, kdp_hv, vmin=0, vmax=360, cmap='nipy_spectral')
+    plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, phi_dp, vmin=0, vmax=360, cmap='nipy_spectral')
     plt.colorbar()
     plt.scatter(0, 0, color='k')
-    # plt.title(start_time.strftime('KDFX %Y%m%d-%H%M%S Elev: {elev}'.format(elev=np.rad2deg(elev))))
-    # plt.savefig(test_file.split('/')[-1] + '.png')
-    plt.show()
+
+    plt.subplot(1, 2, 2)
+    plt.xlim(-80, 80)
+    plt.ylim(-80, 80)
+    plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, ref, vmin=0, vmax=50)
+    plt.colorbar()
+    plt.scatter(0, 0, color='k')
+
+    plt.suptitle(start_time.strftime('KDFX %Y%m%d-%H%M%S Elev: {elev}'.format(elev=np.rad2deg(elev))))
+    plt.savefig(f.split('/')[-1] + '.png')
+    plt.close()
+    # plt.show(block=True)
 
 count = len(files)
 
@@ -76,11 +100,12 @@ count = len(files)
 
 # create quick plot
 plt.figure()
-plt.xlim(-40, 40)
-plt.ylim(-40, 40)
-plt.pcolormesh(x_m*1e-3, y_m*1e-3, kdp_hv, vmin=0, vmax=360, cmap='nipy_spectral')
+plt.xlim(-100, 100)
+plt.ylim(-100, 100)
+plt.pcolormesh(x_m*1e-3, y_m*1e-3, phi_dp_running/count, vmin=0, vmax=360, cmap='nipy_spectral')
 plt.colorbar()
 plt.scatter(0, 0, color='y')
 # plt.title(start_time.strftime('KDFX %Y%m%d-%H%M%S Elev: {elev}'.format(elev=np.rad2deg(elev))))
-# plt.savefig(test_file.split('/')[-1] + '.png')
-plt.show()
+plt.savefig(start_time.strftime('avg_KDFX_%Y%m%d.png'))
+# plt.show()
+plt.close()
