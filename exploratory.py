@@ -6,6 +6,8 @@ import numpy as np
 import pyart
 import utm
 
+from random_functions import save_data_as_image
+
 # Sweep to process
 sweep = 0
 
@@ -13,7 +15,7 @@ sweep = 0
 lat_bat = 29.434507
 lon_bat = -99.684534
 
-files = glob('/Users/tbupper90/Data/nexrad/KDFX/raw/20160617/KDFX20160617_*')
+files = glob('/Users/tbupper90/Data/nexrad/KDFX/raw/20160617/KDFX20160617_02*')
 
 first = True
 for f in files:
@@ -73,25 +75,25 @@ for f in files:
     # Get differential phase data
     phi_dp_running[~phi_dp.mask] += phi_dp[~phi_dp.mask] * ref[~phi_dp.mask]
 
-    plt.figure(figsize=(16, 8))
-    plt.subplot(1, 2, 1)
-    plt.xlim(-80, 80)
-    plt.ylim(-80, 80)
-    plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, phi_dp, vmin=0, vmax=360, cmap='nipy_spectral')
-    plt.colorbar()
-    plt.scatter(0, 0, color='k')
-
-    plt.subplot(1, 2, 2)
-    plt.xlim(-80, 80)
-    plt.ylim(-80, 80)
-    plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, ref, vmin=0, vmax=50)
-    plt.colorbar()
-    plt.scatter(0, 0, color='k')
-
-    plt.suptitle(start_time.strftime('KDFX %Y%m%d-%H%M%S Elev: {elev}'.format(elev=np.rad2deg(elev))))
-    plt.savefig(f.split('/')[-1] + '.png')
-    plt.close()
-    # plt.show(block=True)
+    # plt.figure(figsize=(16, 8))
+    # plt.subplot(1, 2, 1)
+    # plt.xlim(-80, 80)
+    # plt.ylim(-80, 80)
+    # plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, phi_dp, vmin=0, vmax=360, cmap='nipy_spectral')
+    # plt.colorbar()
+    # plt.scatter(0, 0, color='k')
+    #
+    # plt.subplot(1, 2, 2)
+    # plt.xlim(-80, 80)
+    # plt.ylim(-80, 80)
+    # plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, ref, vmin=0, vmax=50)
+    # plt.colorbar()
+    # plt.scatter(0, 0, color='k')
+    #
+    # plt.suptitle(start_time.strftime('KDFX %Y%m%d-%H%M%S Elev: {elev}'.format(elev=np.rad2deg(elev))))
+    # plt.savefig(f.split('/')[-1] + '.png')
+    # plt.close()
+    # # plt.show(block=True)
 
 count = len(files)
 
@@ -109,3 +111,6 @@ plt.scatter(0, 0, color='y')
 plt.savefig(start_time.strftime('avg_KDFX_%Y%m%d.png'))
 # plt.show()
 plt.close()
+
+
+save_data_as_image(x_m*1e-3, y_m*1e-3, phi_dp_running/count, 'test2.png')
