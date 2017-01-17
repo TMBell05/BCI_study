@@ -1,0 +1,17 @@
+REQUIREMENTS
+
+- Python 3.7+
+- numpy
+- netCDF4
+- nexradaws (https://github.com/TMBell05/nexradaws)
+- PyART (https://github.com/ARM-DOE/pyart)
+- matplotlib
+
+pip:
+  - boto3==1.4.3
+  - botocore==1.4.93
+  - docutils==0.13.1
+  - jmespath==0.9.0
+  - nexradaws==0.0.2
+  - s3transfer==0.1.10
+  - utm==0.4.1
