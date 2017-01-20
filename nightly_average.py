@@ -49,6 +49,9 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         dt = pyart.graph.common.generate_radar_time_begin(radar)  # Scan time
         slice = radar.get_slice(SWEEP)
 
+        if dt > datetime.strptime(end_date, "%Y%m%d-%H%M%S"):
+            break
+
         if first:
             radar_lat = radar.latitude['data'][0]
             radar_lon = radar.longitude['data'][0]
@@ -95,8 +98,8 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         # Add data to the running sums
         phi_dp_running[~phi_dp.mask] += phi_dp[~phi_dp.mask]
         phi_dp_weighted_running[~phi_dp.mask] += phi_dp[~phi_dp.mask] * ref[~phi_dp.mask]
-        ref_linear_running[~phi_dp.mask] += db2pow(ref[~phi_dp.mask])
-        eta_linear_running[~phi_dp.mask] += db2pow(ref[~phi_dp.mask] + 11.6)
+        ref_linear_running[~ref.mask] += db2pow(ref[~ref.mask])
+        eta_linear_running[~ref.mask] += db2pow(ref[~ref.mask] + 11.6)
 
         # Make some plots
         plt.figure(figsize=(16, 8))
@@ -161,8 +164,9 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
     var[:] = eta_linear_running
 
     var = nc.createVariable('azimuth', datatype='f8', dimensions=('az',))
-    var.setncattr('units', 'deg')
-    var[:] = radar.azimuth['data'][:][az_p]
+    var.setncattr('units', 'radians')
+    print(az_rad[az_p, 0])
+    var[:] = az_rad[az_p, 0]
 
     var = nc.createVariable('range', datatype='f8', dimensions=('rng',))
     var.setncattr('units', 'm')
