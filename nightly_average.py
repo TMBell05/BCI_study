@@ -43,11 +43,21 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
 
     # Iterate through the files
     first = True
+    count = 0
     for f in files:
         print(f)
-        radar = pyart.io.read_nexrad_archive(f)
+
+        try:
+            radar = pyart.io.read_nexrad_archive(f)
+        except Exception as e:
+            print("Can't open file " + f)
+
         dt = pyart.graph.common.generate_radar_time_begin(radar)  # Scan time
         slice = radar.get_slice(SWEEP)
+
+        if radar.metadata['vcp_pattern'] not in [31, 32]:
+            print("VCP other than clear air mode found")
+            continue
 
         if dt > datetime.strptime(end_date, "%Y%m%d-%H%M%S"):
             break
@@ -76,7 +86,7 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         y_m = range_m * np.cos(elev) * np.cos(az_rad)
 
         # Get the correct order of the azimuths
-        az_p = np.argsort(az_rad, axis=0)[:,0]
+        az_p = np.argsort(az_rad, axis=0)[:, 0]
 
         # Sort the x and y grids based on the order of the azimuths
         x_m = x_m[az_p, :]
@@ -96,10 +106,23 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         ref.mask = gate_filter.gate_excluded[az_p, :]
 
         # Add data to the running sums
-        phi_dp_running[~phi_dp.mask] += phi_dp[~phi_dp.mask]
-        phi_dp_weighted_running[~phi_dp.mask] += phi_dp[~phi_dp.mask] * ref[~phi_dp.mask]
-        ref_linear_running[~ref.mask] += db2pow(ref[~ref.mask])
-        eta_linear_running[~ref.mask] += db2pow(ref[~ref.mask] + 11.6)
+        try:
+            phi_dp_running[~phi_dp.mask] += phi_dp[~phi_dp.mask]
+            phi_dp_weighted_running[~phi_dp.mask] += phi_dp[~phi_dp.mask] * ref[~phi_dp.mask]
+            ref_linear_running[~ref.mask] += db2pow(ref[~ref.mask])
+            eta_linear_running[~ref.mask] += db2pow(ref[~ref.mask] + 11.6)
+        except IndexError as e:
+            # TODO- account for this somehow other than an exception
+            print("Index error Encountered, taking only first 360 lines on axis zero")
+            phi_dp_running[~phi_dp.mask[0:359, :]] += phi_dp[~phi_dp.mask[0:359, :]]
+            phi_dp_weighted_running[~phi_dp.mask[0:359, :]] += phi_dp[~phi_dp.mask[0:359, :]] * ref[~phi_dp.mask[0:359, :]]
+            ref_linear_running[~ref.mask[0:359, :]] += db2pow(ref[~ref.mask[0:359, :]])
+            eta_linear_running[~ref.mask[0:359, :]] += db2pow(ref[~ref.mask[0:359, :]] + 11.6)
+
+            az_p = az_p[0:359]
+        except Exception as e:
+            print("Unknown error: " + e)
+            continue
 
         # Make some plots
         plt.figure(figsize=(16, 8))
@@ -127,6 +150,12 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         plt.close()
         # plt.show(block=True)
 
+        count += 1
+
+    # If no files were processed
+    if count == 0:
+        return
+
     # Write out the netcdf
     start_time = datetime.strptime(start_date, "%Y%m%d-%H%M%S")
     if not os.path.exists(nc_base_dir): os.makedirs(nc_base_dir)
@@ -134,11 +163,11 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
     nc = netCDF4.Dataset(nc_name, 'w')
 
     # Add the dimensions
-    az = nc.createDimension('az', size=(len(az_rad[:,0])),)
-    rng = nc.createDimension('rng', size=(range_m.shape[1]))
+    az = nc.createDimension('az', size=phi_dp_running.shape[0],)
+    rng = nc.createDimension('rng', size=(phi_dp_running.shape[1]))
 
     # Add the attributes
-    attrs = {'num_scans': len(files),
+    attrs = {'num_scans': count,
              'start_time': start_date,
              'end_time': end_date,
              'radar_lat': radar_lat,
@@ -165,7 +194,6 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
 
     var = nc.createVariable('azimuth', datatype='f8', dimensions=('az',))
     var.setncattr('units', 'radians')
-    print(az_rad[az_p, 0])
     var[:] = az_rad[az_p, 0]
 
     var = nc.createVariable('range', datatype='f8', dimensions=('rng',))
