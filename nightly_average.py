@@ -173,7 +173,8 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
              'radar_lat': radar_lat,
              'radar_lon': radar_lon,
              'sweep_number': SWEEP,
-             'elevation': np.rad2deg(elev)
+             'elevation': np.rad2deg(elev),
+             'site': site
              }
     nc.setncatts(attrs)
 
