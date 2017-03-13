@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import netCDF4
-
+import csv
 
 def db2pow(x):
     return 10.**(x/10.)
@@ -9,6 +9,18 @@ def db2pow(x):
 
 def pow2db(x):
     return 10. * np.log10(x)
+
+
+def read_caves(csv_file, site):
+    caves = []
+
+    with open(csv_file) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row['radar'] == site:
+                caves.append(row)
+
+    return caves
 
 
 def save_data_as_tiff(x, y, data, image_name):
@@ -20,6 +32,19 @@ def save_data_as_tiff(x, y, data, image_name):
     fig.get_axes()[0].get_xaxis().set_visible(False)
     fig.get_axes()[0].get_yaxis().set_visible(False)
     plt.savefig(image_name, bbox_inches='tight', pad_inches=0)
+    plt.close()
+
+
+def greens_theorem(vs):
+    a = 0
+    x0,y0 = vs[0]
+    for [x1,y1] in vs[1:]:
+        dx = x1-x0
+        dy = y1-y0
+        a += 0.5*(y0*dx - x0*dy)
+        x0 = x1
+        y0 = y1
+    return a
 
 
 def plot_netcdf(netcdf_file, img_name=None):
@@ -64,8 +89,10 @@ def plot_netcdf(netcdf_file, img_name=None):
     # plt.suptitle('KDFX %Y%m%d-%H%M%S Elev: {elev}'.format(elev=np.rad2deg(elev)))
     # plt.close()
     if img_name is not None:
-        save_data_as_tiff(x_m/1e3, y_m/1e3, nc['phi_dp_weighted_sum'][:]/nc.num_scans, 'test.png')
         plt.savefig(img_name)
+        save_data_as_tiff(x_m/1e3, y_m/1e3, nc['phi_dp_weighted_sum'][:]/nc.num_scans, 'test.png')
+
+    nc.close()
     plt.close()
     # plt.show()
 
