@@ -19,6 +19,9 @@ from utils import *
 # Sweep to take
 SWEEP = 0
 
+# Cave file
+cave_csv = '/Users/tbupper90/Google Drive/Research/BCI_study/cave_locations.csv'
+caves = read_caves(cave_csv, 'KDFX')
 
 def process_files(start_date, end_date, site, data_dir, out_dir):
     # Set up the directory for the radar download
@@ -65,6 +68,27 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         if first:
             radar_lat = radar.latitude['data'][0]
             radar_lon = radar.longitude['data'][0]
+
+            cave_x = []
+            cave_y = []
+            # Convert cave lat/lon to x/y coord system
+            x_radar, y_radar, _, _ = utm.from_latlon(radar_lat, radar_lon)
+
+            for cave in caves:
+                # Convert lat-lons to utm for
+                x_bat, y_bat, _, _ = utm.from_latlon(float(cave['lat']), float(cave['lon']))
+                # Calc relative x and y of roost
+                x_rel_m = (x_bat - x_radar)
+                y_rel_m = (y_bat - y_radar)
+                cave['x'] = x_rel_m / 1e3
+                cave['y'] = y_rel_m / 1e3
+
+                cave_x.append(x_rel_m/1e3)
+                cave_y.append(y_rel_m/1e3)
+                # Get rid of misc crap
+                del x_bat, y_bat, _
+
+
 
             # Convert lat-lons to utm for
             x_radar, y_radar, _, _ = utm.from_latlon(radar_lat, radar_lon)
@@ -132,6 +156,7 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, phi_dp, vmin=0, vmax=360, cmap='nipy_spectral')
         plt.colorbar()
         plt.scatter(0, 0, color='k')
+        plt.scatter(cave_x, cave_y, c='y')
 
         plt.subplot(1, 2, 2)
         plt.xlim(-100, 100)
