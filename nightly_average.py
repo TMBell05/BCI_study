@@ -1,5 +1,6 @@
 # Standard libs
 import argparse
+import logging
 import os
 import tempfile
 from datetime import datetime
@@ -20,35 +21,52 @@ from utils import *
 SWEEP = 0
 
 # Cave file
-cave_csv = '/Users/tbupper90/Google Drive/Research/BCI_study/cave_locations.csv'
+cave_csv = 'cave_locations.csv'
 caves = read_caves(cave_csv, 'KDFX')
 
-def process_files(start_date, end_date, site, data_dir, out_dir):
+# Expected radar grid (azimuth and range)
+AZ_SIZE = None
+RNG_SIZE = None
+AZ = None
+RNG = None
+
+
+def process_files(start_date, end_date, site, data_dir, out_dir, verbose=False):
+    if verbose:
+        logging.basicConfig(format="%(asctime)s:%(levelname)s:%(message)s", level=logging.DEBUG)
+    else:
+        # Set up logging
+        logging.basicConfig(format="%(asctime)s:%(levelname)s:%(message)s", level=logging.INFO)
+
     # Set up the directory for the radar download
     if data_dir is None:
         data_dir = tempfile.mkdtemp()
+        logging.debug("Created temp dir: {0}".format(data_dir))
         tmp_dir = True
     else:
         tmp_dir = False
 
     # Start by trying to download the data (should go quick if the data is already in the right directory)
+    logging.debug("Starting to download data")
     data_dirs = get_nexrad_data(site, start_date, end_date, data_dir)
-
     # Make a list of the files to process
     files = []
     for dir in data_dirs:
         dir = os.path.join(dir, '*')
         files = files + glob(dir)
+    logging.debug("Processing {0} files".format(len(files)))
 
     # Do some bookkeeping for later
     image_base_dir = os.path.join(out_dir, 'images')
+    logging.debug("Images being written to {0}".format(image_base_dir))
     nc_base_dir = os.path.join(out_dir, 'netcdf')
+    logging.debug("NetCDFs being written to {0}".format(nc_base_dir))
 
     # Iterate through the files
     first = True
     count = 0
     for f in files:
-        print(f)
+        logging.info("Processing {0}".format(f))
 
         try:
             radar = pyart.io.read_nexrad_archive(f)
@@ -59,7 +77,7 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         slice = radar.get_slice(SWEEP)
 
         if radar.metadata['vcp_pattern'] not in [31, 32]:
-            print("VCP other than clear air mode found")
+            logging.warning("VCP other than clear air mode found, skipping file")
             continue
 
         if dt > datetime.strptime(end_date, "%Y%m%d-%H%M%S"):
@@ -88,8 +106,6 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
                 # Get rid of misc crap
                 del x_bat, y_bat, _
 
-
-
             # Convert lat-lons to utm for
             x_radar, y_radar, _, _ = utm.from_latlon(radar_lat, radar_lon)
 
@@ -98,8 +114,6 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
             phi_dp_weighted_running = np.zeros_like(phi_dp_running)
             ref_linear_running = np.zeros_like(radar.fields['reflectivity']['data'][slice])
             eta_linear_running = np.zeros_like(ref_linear_running)
-
-            first = False
 
         # Get azimuth, range, and elevation for conversion to x and y
         range_m, az_deg = np.meshgrid(radar.range['data'], radar.azimuth['data'][slice])
@@ -116,7 +130,15 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         x_m = x_m[az_p, :]
         y_m = y_m[az_p, :]
 
+        if first:
+            RNG = range_m[0, :]
+            RNG_SIZE = RNG.size
+            AZ = az_rad[:, 0][az_p]
+            AZ_SIZE = AZ.size
+            first = False
+
         # # Apply filters and corrections to data
+        logging.debug("Applying corrections")
         gate_filter = pyart.filters.GateFilter(radar)
         gate_filter.exclude_below('differential_phase', 70.)
         gate_filter = pyart.correct.despeckle_field(radar, 'differential_phase', gatefilter=gate_filter)
@@ -129,24 +151,42 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         phi_dp.mask = gate_filter.gate_excluded[az_p, :]
         ref.mask = gate_filter.gate_excluded[az_p, :]
 
-        # Add data to the running sums
-        try:
-            phi_dp_running[~phi_dp.mask] += phi_dp[~phi_dp.mask]
-            phi_dp_weighted_running[~phi_dp.mask] += phi_dp[~phi_dp.mask] * ref[~phi_dp.mask]
-            ref_linear_running[~ref.mask] += db2pow(ref[~ref.mask])
-            eta_linear_running[~ref.mask] += db2pow(ref[~ref.mask] + 11.6)
-        except IndexError as e:
-            # TODO- account for this somehow other than an exception
-            print("Index error Encountered, taking only first 360 lines on axis zero")
-            phi_dp_running[~phi_dp.mask[0:359, :]] += phi_dp[~phi_dp.mask[0:359, :]]
-            phi_dp_weighted_running[~phi_dp.mask[0:359, :]] += phi_dp[~phi_dp.mask[0:359, :]] * ref[~phi_dp.mask[0:359, :]]
-            ref_linear_running[~ref.mask[0:359, :]] += db2pow(ref[~ref.mask[0:359, :]])
-            eta_linear_running[~ref.mask[0:359, :]] += db2pow(ref[~ref.mask[0:359, :]] + 11.6)
+        # Check to make sure the data lines up with the desired size
+        if phi_dp_running.shape != phi_dp.shape:
+            logging.warning("Data size other than ({}, {}) found".format(AZ_SIZE, RNG_SIZE))
+            logging.warning("Data size: ({}, {})".format(phi_dp.shape[0], phi_dp.shape[1]))
+            if az_rad.size < AZ_SIZE:
+                logging.debug("Applying pad to account for having too few azimuths")
+                diff = abs(az_rad.size - AZ_SIZE)
+                phi_dp = np.pad(phi_dp, diff, mode='constant')[diff:, diff:-diff]
+                ref = np.pad(ref, diff, mode='constant')[diff:, diff:-diff]
+            elif az_rad.size > AZ_SIZE:
+                logging.debug("Chopping off end of grid because too many azimuths")
+                phi_dp = phi_dp[:AZ_SIZE, :]
+                ref = ref[:AZ_SIZE, :]
+            else:
+                logging.critical("SOMETHING WENT WRONG WITH THE RANGE")
+                raise Exception
 
-            az_p = az_p[0:359]
-        except Exception as e:
-            print("Unknown error: " + e)
-            continue
+        # Add data to the running sums
+        # try:
+        logging.debug("Added data to running sums")
+        phi_dp_running[~phi_dp.mask] += phi_dp[~phi_dp.mask]
+        phi_dp_weighted_running[~phi_dp.mask] += phi_dp[~phi_dp.mask] * ref[~phi_dp.mask]
+        ref_linear_running[~ref.mask] += db2pow(ref[~ref.mask])
+        eta_linear_running[~ref.mask] += db2pow(ref[~ref.mask] + 11.6)
+        # except IndexError as e:
+        #     # TODO- account for this somehow other than an exception
+        #     print("Index error Encountered, taking only first 360 lines on axis zero")
+        #     phi_dp_running[~phi_dp.mask[0:359, :]] += phi_dp[~phi_dp.mask[0:359, :]]
+        #     phi_dp_weighted_running[~phi_dp.mask[0:359, :]] += phi_dp[~phi_dp.mask[0:359, :]] * ref[~phi_dp.mask[0:359, :]]
+        #     ref_linear_running[~ref.mask[0:359, :]] += db2pow(ref[~ref.mask[0:359, :]])
+        #     eta_linear_running[~ref.mask[0:359, :]] += db2pow(ref[~ref.mask[0:359, :]] + 11.6)
+        #
+        #     az_p = az_p[0:359]
+        # except Exception as e:
+        #     print("Unknown error: " + e)
+        #     continue
 
         # Make some plots
         plt.figure(figsize=(16, 8))
@@ -171,6 +211,7 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         image_name = os.path.join(image_dir, dt.strftime('{site}_%Y%m%d_%H%M%S.png'.format(site=site)))
 
         plt.suptitle(dt.strftime('{site} %Y%m%d-%H%M%S Elev: {elev}'.format(elev=np.rad2deg(elev), site=site)))
+        logging.debug("Saving image: {}".format(image_name))
         plt.savefig(image_name)
         plt.close()
         # plt.show(block=True)
@@ -182,14 +223,17 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
         return
 
     # Write out the netcdf
+    logging.info("Preparing netCDF")
     start_time = datetime.strptime(start_date, "%Y%m%d-%H%M%S")
     if not os.path.exists(nc_base_dir): os.makedirs(nc_base_dir)
-    nc_name = os.path.join(nc_base_dir, start_time.strftime("average_%Y%m%d.nc"))
+    nc_name = os.path.join(nc_base_dir, start_time.strftime("{}_average_%Y%m%d.nc".format(site)))
     nc = netCDF4.Dataset(nc_name, 'w')
 
     # Add the dimensions
+    print(phi_dp_running.shape[1], AZ.shape)
     az = nc.createDimension('az', size=phi_dp_running.shape[0],)
-    rng = nc.createDimension('rng', size=(phi_dp_running.shape[1]))
+    rng = nc.createDimension('rng', size=phi_dp_running.shape[1],)
+
 
     # Add the attributes
     attrs = {'num_scans': count,
@@ -220,16 +264,18 @@ def process_files(start_date, end_date, site, data_dir, out_dir):
 
     var = nc.createVariable('azimuth', datatype='f8', dimensions=('az',))
     var.setncattr('units', 'radians')
-    var[:] = az_rad[az_p, 0]
+    var[:] = AZ
 
     var = nc.createVariable('range', datatype='f8', dimensions=('rng',))
     var.setncattr('units', 'm')
-    var[:] = radar.range['data'][:]
+    var[:] = RNG
 
     nc.close()
+    logging.info("NetCDF write successful")
 
     # Delete the temporary folder if used
     if tmp_dir is True:
+        logging.debug("Removing temp dir")
         rmtree(data_dir)
 
 if __name__=='__main__':
