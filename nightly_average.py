@@ -30,6 +30,10 @@ RNG_SIZE = None
 AZ = None
 RNG = None
 
+# Thresholds
+PHIDP_THRESH = 70
+REF_THRESH = 5
+
 
 def process_files(start_date, end_date, site, data_dir, out_dir, verbose=False):
     if verbose:
@@ -72,6 +76,7 @@ def process_files(start_date, end_date, site, data_dir, out_dir, verbose=False):
             radar = pyart.io.read_nexrad_archive(f)
         except Exception as e:
             print("Can't open file " + f)
+            continue
 
         dt = pyart.graph.common.generate_radar_time_begin(radar)  # Scan time
         slice = radar.get_slice(SWEEP)
@@ -106,13 +111,15 @@ def process_files(start_date, end_date, site, data_dir, out_dir, verbose=False):
                 # Get rid of misc crap
                 del x_bat, y_bat, _
 
-            # Convert lat-lons to utm for
+            # Convert lat-lons to utm forndvf0
             x_radar, y_radar, _, _ = utm.from_latlon(radar_lat, radar_lon)
 
             # Init arrays for averaging
             phi_dp_running = np.zeros_like(radar.fields['differential_phase']['data'][slice].data)
             phi_dp_weighted_running = np.zeros_like(phi_dp_running)
-            ref_linear_running = np.zeros_like(radar.fields['reflectivity']['data'][slice])
+            phi_dp_linear_weighted_running = np.zeros_like(phi_dp_running)
+            ref_linear_running = np.zeros_like(radar.fields['reflectivity']['data'][slice].data)
+            ref_running = np.zeros_like(ref_linear_running)
             eta_linear_running = np.zeros_like(ref_linear_running)
 
         # Get azimuth, range, and elevation for conversion to x and y
@@ -140,7 +147,8 @@ def process_files(start_date, end_date, site, data_dir, out_dir, verbose=False):
         # # Apply filters and corrections to data
         logging.debug("Applying corrections")
         gate_filter = pyart.filters.GateFilter(radar)
-        gate_filter.exclude_below('differential_phase', 70.)
+        gate_filter.exclude_below('differential_phase', PHIDP_THRESH)
+        gate_filter.exclude_below('reflectivity', REF_THRESH)
         gate_filter = pyart.correct.despeckle_field(radar, 'differential_phase', gatefilter=gate_filter)
 
         # Extract the desired data and get it in the correct order
@@ -173,20 +181,11 @@ def process_files(start_date, end_date, site, data_dir, out_dir, verbose=False):
         logging.debug("Added data to running sums")
         phi_dp_running[~phi_dp.mask] += phi_dp[~phi_dp.mask]
         phi_dp_weighted_running[~phi_dp.mask] += phi_dp[~phi_dp.mask] * ref[~phi_dp.mask]
+        phi_dp_linear_weighted_running[~phi_dp.mask] += phi_dp[~phi_dp.mask] * db2pow(ref[~phi_dp.mask])
+
+        ref_running[~ref.mask] += ref[~ref.mask]
         ref_linear_running[~ref.mask] += db2pow(ref[~ref.mask])
         eta_linear_running[~ref.mask] += db2pow(ref[~ref.mask] + 11.6)
-        # except IndexError as e:
-        #     # TODO- account for this somehow other than an exception
-        #     print("Index error Encountered, taking only first 360 lines on axis zero")
-        #     phi_dp_running[~phi_dp.mask[0:359, :]] += phi_dp[~phi_dp.mask[0:359, :]]
-        #     phi_dp_weighted_running[~phi_dp.mask[0:359, :]] += phi_dp[~phi_dp.mask[0:359, :]] * ref[~phi_dp.mask[0:359, :]]
-        #     ref_linear_running[~ref.mask[0:359, :]] += db2pow(ref[~ref.mask[0:359, :]])
-        #     eta_linear_running[~ref.mask[0:359, :]] += db2pow(ref[~ref.mask[0:359, :]] + 11.6)
-        #
-        #     az_p = az_p[0:359]
-        # except Exception as e:
-        #     print("Unknown error: " + e)
-        #     continue
 
         # Make some plots
         plt.figure(figsize=(16, 8))
@@ -234,7 +233,6 @@ def process_files(start_date, end_date, site, data_dir, out_dir, verbose=False):
     az = nc.createDimension('az', size=phi_dp_running.shape[0],)
     rng = nc.createDimension('rng', size=phi_dp_running.shape[1],)
 
-
     # Add the attributes
     attrs = {'num_scans': count,
              'start_time': start_date,
@@ -255,9 +253,15 @@ def process_files(start_date, end_date, site, data_dir, out_dir, verbose=False):
     var = nc.createVariable('phi_dp_weighted_sum', datatype='f8', dimensions=('az', 'rng'))
     var[:] = phi_dp_weighted_running
 
+    var = nc.createVariable('phi_dp_linear_weighted_sum', datatype='f8', dimensions=('az', 'rng'))
+    var[:] = phi_dp_linear_weighted_running
+
     var = nc.createVariable('ref_linear_sum', datatype='f8', dimensions=('az', 'rng'))
     var.setncattr('units', 'mm^6/m^3')
     var[:] = ref_linear_running
+
+    var = nc.createVariable('ref_sum', datatype='f8', dimensions=('az', 'rng'))
+    var[:] = ref_running
 
     var = nc.createVariable('eta_linear_sum', datatype='f8', dimensions=('az', 'rng'))
     var[:] = eta_linear_running
