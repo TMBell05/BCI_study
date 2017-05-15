@@ -22,7 +22,7 @@ SWEEP = 0
 
 # Cave file
 cave_csv = 'cave_locations.csv'
-caves = read_caves(cave_csv, 'KDFX')
+# caves = read_caves(cave_csv, 'KDFX')
 
 # Expected radar grid (azimuth and range)
 AZ_SIZE = None
@@ -96,6 +96,8 @@ def process_files(start_date, end_date, site, data_dir, out_dir, verbose=False):
             cave_y = []
             # Convert cave lat/lon to x/y coord system
             x_radar, y_radar, _, _ = utm.from_latlon(radar_lat, radar_lon)
+
+            caves = read_caves(cave_csv, site)
 
             for cave in caves:
                 # Convert lat-lons to utm for

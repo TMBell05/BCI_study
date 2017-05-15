@@ -6,11 +6,11 @@ import os
 import utm
 from shapely.geometry import Polygon
 from glob import glob
-from utils import greens_theorem, read_caves
+from utils import greens_theorem, read_caves, pow2db, distance
 
-
-def distance(x1, y1, x2, y2):
-    return np.sqrt((x2-x1)**2 + (y2 - y1)**2)
+MIN_AREA = 75  # km^2
+MAX_AREA = 12000  # km^2
+MAX_DISTANCE = 75  # km^2
 
 
 def get_sba(nc_file, cave_csv):
@@ -24,26 +24,24 @@ def get_sba(nc_file, cave_csv):
     y_m = range_m * np.cos(elev) * np.cos(az_rad)
 
     plt.figure(figsize=(10, 10))
-    plt.xlim(-150, 150)
-    plt.ylim(-150, 150)
-    plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, nc['phi_dp_weighted_sum'][:] / nc.num_scans,
-                   vmin=0, vmax=360, cmap='nipy_spectral')
-    contours = plt.contour(x_m * 1e-3, y_m * 1e-3, nc['phi_dp_weighted_sum'][:] / nc.num_scans,
-                           levels=[360.])
-    plt.title("PhiDP")
+    plt.xlim(-200, 200)
+    plt.ylim(-200, 200)
+    # tmp = np.ma.masked_where(nc['ref_sum'][:] == 0, nc['ref_sum'][:])
+    plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, pow2db(nc['ref_linear_sum'][:] / nc.num_scans),
+                   vmin=0, cmap='nipy_spectral')
+    plt.colorbar()
+    contours = plt.contour(x_m * 1e-3, y_m * 1e-3, pow2db(nc['ref_linear_sum'][:] / nc.num_scans),
+                           levels=[np.max(pow2db(nc['ref_linear_sum'][:] / nc.num_scans))/7.5])
+    plt.title("Average Reflectivity " + nc_file.split('\\')[-1].replace('.nc', ''))
 
     # Significant bat areas to save
     sbis = []
 
     # Loop through the contours
     for path in contours.collections[0].get_paths():
-        verts = path.vertices
-
-        if greens_theorem(verts) > 100:
-            try:
-                # Convert the contour to a polygon
-                poly = Polygon(verts)
-
+        try:
+            poly = Polygon(path.vertices)
+            if MIN_AREA < poly.area < MAX_AREA:
                 # Get the xy coord of the verticies
                 x, y = poly.exterior.xy
 
@@ -66,9 +64,10 @@ def get_sba(nc_file, cave_csv):
                              }
 
                 sbis.append(poly_dict)
-            except Exception:
-                print("Exception Encountered! Skipping the contour")
-                pass
+        except Exception as e:
+            print("Exception Encountered! Skipping the contour")
+            print(e)
+            pass
 
     # Get the cave info for this radar
     caves = read_caves(cave_csv, nc.site)
@@ -82,42 +81,48 @@ def get_sba(nc_file, cave_csv):
         # Convert lat-lons to utm for
         x_bat, y_bat, _, _ = utm.from_latlon(float(cave['lat']), float(cave['lon']))
 
-
         # Calc relative x and y of roost
         x_rel_m = (x_bat - x_radar)
         y_rel_m = (y_bat - y_radar)
 
         cave['x'] = x_rel_m/1e3
         cave['y'] = y_rel_m/1e3
+        plt.scatter(cave['x'], cave['y'], c='y')
 
         # Get rid of misc crap
         del x_bat, y_bat, _
 
-    # Find the closest cave to the sbi
+    # Find the closest cave theo the sbi
     for sbi in sbis:
         closest = None
         for i, cave in enumerate(caves):
             dist = distance(cave['x'], sbi['rep_x'], cave['y'], sbi['rep_y'])
-            print(dist)
-            if closest is None:
+            # print(closest, dist)
+            if closest is None and dist < MAX_DISTANCE:
                 closest = (dist, i)
-            elif dist < closest[0]:
+            elif MAX_DISTANCE > dist < closest[0]:
                 closest = (dist, i)
-            print(cave['x'], cave['y'])
             plt.scatter(cave['x'], cave['y'], c='y')
-
-
-        print(closest)
-
-        sbi['cave'] = caves[closest[1]]['name']
-        sbi['cave_x'] = caves[closest[1]]['x']
-        sbi['cave_y'] = caves[closest[1]]['y']
+        if closest is not None:
+            sbi['cave'] = caves[closest[1]]['name']
+            sbi['cave_x'] = caves[closest[1]]['x']
+            sbi['cave_y'] = caves[closest[1]]['y']
+            plt.plot([sbi['cave_x'], sbi['rep_x']], [sbi['cave_y'], sbi['rep_y']], color='g')
 
         plt.scatter(sbi['rep_x'], sbi['rep_y'])
 
-    plt.show()
+    plt.savefig(os.path.join('data\\images8', nc_file.split('\\')[-1].replace('.nc', '.png')))
+    plt.close()
+    nc.close()
 
 
 if __name__ == '__main__':
-    get_sba('/Users/tbupper90/data/bci_study/testing/netcdf/average_20160617.nc',
-            '/Users/tbupper90/Google Drive/Research/BCI_study/cave_locations.csv')
+    files = glob('data/netcdf_daily_average/K*.nc')
+    for f in files:
+        print(f)
+        get_sba(f, 'cave_locations.csv')
+        # try:
+        #     get_sba(f, 'cave_locations.csv')
+        # except Exception as e:
+        #     print(e)
+        #     continue

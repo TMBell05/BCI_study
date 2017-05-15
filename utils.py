@@ -7,6 +7,10 @@ def db2pow(x):
     return 10.**(x/10.)
 
 
+def distance(x1, x2, y1, y2):
+    return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+
+
 def pow2db(x):
     return 10. * np.log10(x)
 
