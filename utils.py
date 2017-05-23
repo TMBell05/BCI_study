@@ -2,6 +2,31 @@ import matplotlib.pyplot as plt
 import numpy as np
 import netCDF4
 import csv
+from scipy.interpolate import RegularGridInterpolator
+
+
+def interpolate(az, rng, data, new_az, new_rng):
+
+    # TODO - Do this better.....
+    # Quick fix for repeated azimuths
+    tmp, cts = np.unique(az, return_counts=True)
+    repeated_values = tmp[cts > 1]
+    for value in repeated_values:
+        ind = np.where(az == value)
+        az[ind[0][1:]] += .0001
+
+
+    # Make the interpolate function
+    interp_funct = RegularGridInterpolator((az, rng), data)
+    interp_funct.bounds_error = False
+
+    # Make the points
+    pts = np.asarray([[a, r] for a, r in zip(new_az.flatten(), new_rng.flatten())])
+
+    # do the interpolation
+    new_data = interp_funct(pts)
+    return new_data.reshape(new_az.shape)
+
 
 def db2pow(x):
     return 10.**(x/10.)

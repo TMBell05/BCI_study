@@ -27,7 +27,7 @@ def get_sba(nc_file, cave_csv):
     plt.xlim(-200, 200)
     plt.ylim(-200, 200)
     # tmp = np.ma.masked_where(nc['ref_sum'][:] == 0, nc['ref_sum'][:])
-    plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, pow2db(nc['ref_linear_sum'][:] / nc.num_scans),
+    plt.pcolormesh(x_m * 1e-3, y_m * 1e-3, pow2db(nc['eta_linear_sum'][:] / nc.num_scans),
                    vmin=0, cmap='nipy_spectral')
     plt.colorbar()
     contours = plt.contour(x_m * 1e-3, y_m * 1e-3, pow2db(nc['ref_linear_sum'][:] / nc.num_scans),
@@ -111,7 +111,7 @@ def get_sba(nc_file, cave_csv):
 
         plt.scatter(sbi['rep_x'], sbi['rep_y'])
 
-    plt.savefig(os.path.join('data\\images8', nc_file.split('\\')[-1].replace('.nc', '.png')))
+    plt.savefig(os.path.join('data\\images9', nc_file.split('\\')[-1].replace('.nc', '.png')))
     plt.close()
     nc.close()
 
