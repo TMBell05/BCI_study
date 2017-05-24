@@ -2,9 +2,13 @@ import os
 import logging
 from glob import glob
 
+import cartopy.crs as ccrs
+import gdal
+from osr import SpatialReference
 import matplotlib.pyplot as plt
 import numpy as np
 import netCDF4
+import pyproj
 import utm
 from scipy import interpolate
 
@@ -34,10 +38,11 @@ for season in seasons:
     for radar in radars:
         search_str = os.path.join(source_dir, "{}*{}*.nc".format(radar, season))
         files = glob(search_str)
-        try:
-            # If here, this is the first round
-            first = True
-            for f in files:
+
+        # If here, this is the first round
+        first = True
+        for f in files:
+            try:
                 print(f)
                 nc = netCDF4.Dataset(f)
 
@@ -50,18 +55,32 @@ for season in seasons:
 
                 if first:
                     # Set up grid to interpolate to
-                    AZI = np.deg2rad(np.arange(0, 361, 1))
-                    RNGI = np.arange(0, 460000, 250)
-                    AZI, RNGI = np.meshgrid(AZI, RNGI)
+                    XI = np.arange(-460000., 460000., 1000.)
+                    YI = np.arange(460000., -460000., -1000.)
+                    XI, YI = np.meshgrid(XI, YI)
 
-                    linear_ref = np.zeros_like(AZI)
-                    linear_eta = np.zeros_like(AZI)
+                    # Create running sum arrays
+                    linear_ref = np.zeros_like(XI)
+                    linear_eta = np.zeros_like(XI)
 
-                    XI = RNGI * np.cos(elev) * np.sin(AZI)
-                    YI = RNGI * np.cos(elev) * np.cos(AZI)
+                    # Get the AZ and RNG of the grid
+                    AZI = np.arctan2(YI, XI)
+                    AZI = -AZI + np.pi/2.
+                    AZI = np.where(AZI < 0, AZI + 2.*np.pi, AZI)
+                    RNGI = np.sqrt(XI**2. + YI**2.)
 
-                    x_radar, y_radar, _, _ = utm.from_latlon(nc.radar_lat, nc.radar_lon)
+                    # Coord transform stufffff
+                    x_radar, y_radar, zone, _ = utm.from_latlon(nc.radar_lat, nc.radar_lon)
+                    utm_xi = x_radar + XI
+                    utm_yi = y_radar + YI
 
+                    # proj4 = '+proj=utm +zone={} +south +ellps=WGS84 +datum=WGS84 +units=m +no_defs'.format(zone)
+                    proj4 = '+ellps=WGS84 +proj=ortho +lon_0={} +lat_0={} +no_defs'.format(nc.radar_lon, nc.radar_lat)
+                    proj = pyproj.Proj(proj4)
+
+                    lon, lat = proj(XI, YI, inverse=True)
+
+                    # Set to false so this doesn't repeat for each file
                     first = False
 
                 contour_value = np.max(pow2db(nc['ref_linear_sum'][:] / nc.num_scans))/7.5
@@ -76,24 +95,26 @@ for season in seasons:
                 keepers = nc['ref_linear_sum'][:] > contour_value
 
                 plt.figure()
+                # plt.pcolormesh(lon, lat, pow2db(new_eta), vmin=0, vmax=100)
                 plt.pcolormesh(XI * 1.e-3, YI * 1.e-3, pow2db(new_eta), vmin=0, vmax=100)
                 plt.colorbar()
                 plt.xlim(-200, 200)
                 plt.ylim(-200, 200)
                 plt.savefig('data/season_avgs/raw/{}_{}.png'.format(radar, nc.start_time))
+                # plt.show()
                 plt.close()
 
                 linear_ref += new_ref
                 linear_eta += new_eta
 
                 nc.close()
-        except Exception as e:
-            print("Exception for file {}".format(f))
+            except Exception as e:
+                print(e)
+                print("Exception for file {}".format(f))
 
         # Do some QC?
         linear_ref = np.ma.masked_where(linear_ref == 0, linear_ref)
         avg_ref = pow2db(linear_ref/float(len(files)))
-        print(linear_eta)
 
         plt.figure()
         plt.pcolormesh(XI / 1000., YI / 1000., avg_ref, vmin=0, vmax=50)
@@ -106,8 +127,9 @@ for season in seasons:
         # plt.show()
 
         linear_eta = np.ma.masked_where(linear_eta == 0, linear_eta)
+        avg_eta = linear_eta/float(len(files))/RCS
         plt.figure()
-        plt.pcolormesh(XI / 1000., YI / 1000., linear_eta/float(len(files))/RCS, vmax=500)
+        plt.pcolormesh(XI / 1000., YI / 1000., avg_eta, vmax=500)
         plt.xlim(-200, 200)
         plt.ylim(-200, 200)
         plt.colorbar()
@@ -117,6 +139,33 @@ for season in seasons:
         plt.close()
         # plt.show()
 
+        # Output geotiff
+        xmin, ymin, xmax, ymax = [np.min(XI), np.min(YI), np.max(XI), np.max(YI)]
+        nx = avg_ref.shape[0]
+        ny = avg_ref.shape[1]
+        xres = 1000.
+        yres = 1000.
 
+        geotransform = (xmin, xres, 0, ymax, 0, -yres)
+
+        dst_ds = gdal.GetDriverByName('GTiff').Create('data/season_avgs/sigma_{}_{}_avg.tiff'.format(radar, season),
+                                                      ny, nx, 1, gdal.GDT_Float64)
+        dst_ds.SetGeoTransform(geotransform)
+        srs = SpatialReference()
+        srs.ImportFromProj4(proj4)
+        dst_ds.SetProjection(srs.ExportToWkt())
+        dst_ds.GetRasterBand(1).WriteArray(avg_eta.filled(-9999))
+        dst_ds.GetRasterBand(1).SetNoDataValue(-9999)
+        dst_ds.FlushCache()
+
+        dst_ds = gdal.GetDriverByName('GTiff').Create('data/season_avgs/ref_{}_{}_avg.tiff'.format(radar, season),
+                                                      ny, nx, 1, gdal.GDT_Float64)
+        dst_ds.SetGeoTransform(geotransform)
+        srs = SpatialReference()
+        srs.ImportFromProj4(proj4)
+        dst_ds.SetProjection(srs.ExportToWkt())
+        dst_ds.GetRasterBand(1).WriteArray(avg_ref.filled(-9999))
+        dst_ds.GetRasterBand(1).SetNoDataValue(-9999)
+        dst_ds.FlushCache()
 
 
